@@ -27,9 +27,14 @@ func main() {
 			fmt.Println()
 		} else if prefix == "namespace" {
 			fmt.Printf("package %s\n", afterPrefix)
+		} else if prefix == "include" {
+			fmt.Printf("import %s\n", afterPrefix)
 		} else if prefix == "table" || prefix == "struct" {
 			fmt.Printf("message %s\n", afterPrefix)
 			handleTableContent(reader, 1)
+		} else if prefix == "enum" {
+			fmt.Printf("enum %s{\n", strings.Split(afterPrefix, ":")[0])
+			handleEnumContent(reader, 1)
 		} else {
 			fmt.Printf("!!! unkown line: %s\n", line)
 		}
@@ -43,23 +48,52 @@ func handleTableContent(reader *bufio.Reader, depth int) {
 		check(err)
 
 		if line == "}" {
-			fmt.Printf(line)
+			createTabs(depth - 1)
+			fmt.Println(line)
 			return
 		} else if prefix == "table" || prefix == "struct" {
+			createTabs(depth)
 			fmt.Printf("message %s\n", afterPrefix)
 			handleTableContent(reader, depth+1)
 		} else {
+			createTabs(depth)
 			split := strings.Split(strings.TrimSuffix(line, ";"), ":")
 			if len(split) != 2 {
 				fmt.Printf("!!! unkown line: %s\n", line)
 				continue
 			}
 
-			for i := 0; i < depth; i++ {
-				fmt.Print("\t")
+			if strings.HasPrefix(split[1], "[") {
+				// Arrays
+				split[1] = "repeated " + split[1][1:len(split[1])-1]
 			}
+			optionIndex := strings.Index(split[1], "(")
+			if optionIndex > 0 {
+				optionEnd := strings.Index(split[1], ")")
+				option := strings.TrimSpace(split[1][optionIndex+1 : optionEnd])
+				if option == "required" {
+					split[1] = option + " " + strings.TrimSpace(split[1][:optionIndex])
+				}
+			}
+
 			fmt.Printf("%s %s = %d;\n", split[1], split[0], fieldId)
 			fieldId++
+		}
+	}
+}
+
+func handleEnumContent(reader *bufio.Reader, depth int) {
+	for {
+		line, _, _, err := readNextLine(reader)
+		check(err)
+
+		if line == "}" {
+			createTabs(depth - 1)
+			fmt.Println(line)
+			return
+		} else {
+			createTabs(depth)
+			fmt.Println(line)
 		}
 	}
 }
@@ -80,6 +114,12 @@ func readNextLine(reader *bufio.Reader) (line string, prefix string, afterPrefix
 		prefix = strings.TrimSpace(line[:spaceIndex])
 	}
 	return
+}
+
+func createTabs(depth int) {
+	for i := 0; i < depth; i++ {
+		fmt.Print("\t")
+	}
 }
 
 func check(e error) {
