@@ -6,13 +6,22 @@ import (
 	"io"
 	"os"
 	"strings"
+	"file"
 )
 
 func main() {
+
 	fileName := os.Args[1]
 	f, err := os.Open(fileName)
 	check(err)
 
+	fmt.Printf("syntax = \"proto3\";")
+	fmt.Println()
+
+	convertFile(f)
+}
+
+func convertFile(file File) {
 	fmt.Printf("syntax = \"proto3\";")
 	fmt.Println()
 
@@ -28,7 +37,7 @@ func main() {
 		} else if prefix == "namespace" {
 			fmt.Printf("package %s\n", afterPrefix)
 		} else if prefix == "include" {
-			fmt.Printf("import %s\n", afterPrefix)
+			fmt.Printf("import %s\n", strings.Replace(afterPrefix, ".fbs", ".proto", -1))
 		} else if prefix == "table" || prefix == "struct" {
 			fmt.Printf("message %s\n", afterPrefix)
 			handleTableContent(reader, 1)
@@ -42,7 +51,7 @@ func main() {
 }
 
 func handleTableContent(reader *bufio.Reader, depth int) {
-	fieldId := 0
+	fieldID := 1
 	for {
 		line, prefix, afterPrefix, err := readNextLine(reader)
 		check(err)
@@ -65,21 +74,39 @@ func handleTableContent(reader *bufio.Reader, depth int) {
 
 			if strings.HasPrefix(split[1], "[") {
 				// Arrays
-				split[1] = "repeated " + split[1][1:len(split[1])-1]
+				split[1] = "repeated " + getProtoType(split[1][1:len(split[1])-1])
 			}
 			optionIndex := strings.Index(split[1], "(")
 			if optionIndex > 0 {
 				optionEnd := strings.Index(split[1], ")")
 				option := strings.TrimSpace(split[1][optionIndex+1 : optionEnd])
 				if option == "required" {
-					split[1] = option + " " + strings.TrimSpace(split[1][:optionIndex])
+					// required does not exist for proto3
+					split[1] = strings.TrimSpace(split[1][:optionIndex])
+				} else {
+					// throw away the option
+					split[1] = strings.TrimSpace(split[1][:optionIndex])
 				}
 			}
 
-			fmt.Printf("%s %s = %d;\n", split[1], split[0], fieldId)
-			fieldId++
+			fmt.Printf("%s %s = %d;\n", getProtoType(split[1]), split[0], fieldID)
+			fieldID++
 		}
 	}
+}
+
+func getProtoType(flatType string) string {
+	switch flatType {
+	case "int":
+		return "int32"
+	case "short":
+		return "int32"
+	case "byte":
+		return "int32"
+	case "ubyte":
+		return "uint32"
+	}
+	return flatType
 }
 
 func handleEnumContent(reader *bufio.Reader, depth int) {
@@ -91,10 +118,9 @@ func handleEnumContent(reader *bufio.Reader, depth int) {
 			createTabs(depth - 1)
 			fmt.Println(line)
 			return
-		} else {
-			createTabs(depth)
-			fmt.Println(line)
 		}
+		createTabs(depth)
+		fmt.Println(strings.TrimSuffix(line, ",") + ";")
 	}
 }
 
