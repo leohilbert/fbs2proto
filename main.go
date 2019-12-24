@@ -5,47 +5,71 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
-	"file"
+)
+
+var (
+	w *bufio.Writer
 )
 
 func main() {
+	convertFile(strings.TrimSpace(os.Args[1]))
 
-	fileName := os.Args[1]
-	f, err := os.Open(fileName)
-	check(err)
-
-	fmt.Printf("syntax = \"proto3\";")
-	fmt.Println()
-
-	convertFile(f)
 }
 
-func convertFile(file File) {
-	fmt.Printf("syntax = \"proto3\";")
-	fmt.Println()
+func convertFile(fileName string) {
+	stat, err := os.Stat(fileName)
+	check(err)
+	if stat.IsDir() {
+		filepath.Walk(fileName, func(path string, info os.FileInfo, err error) error {
+			if path != fileName {
+				convertFile(path)
+			}
+			return nil
+		})
+	}
 
-	reader := bufio.NewReader(f)
+	if !strings.HasSuffix(fileName, ".fbs") {
+		return
+	}
+
+	println("converting " + fileName)
+	flatFile, err := os.Open(fileName)
+	check(err)
+
+	newFileName := strings.TrimSuffix(fileName, ".fbs") + ".proto"
+	protoFile, err := os.Create(newFileName)
+	check(err)
+
+	w = bufio.NewWriter(protoFile)
+
+	fmt.Fprintf(w, "syntax = \"proto3\";\n")
+
+	reader := bufio.NewReader(flatFile)
 	for {
 		line, prefix, afterPrefix, err := readNextLine(reader)
 		if err != nil {
+			w.Flush()
 			return
 		}
 
 		if line == "" {
-			fmt.Println()
+			fmt.Fprintln(w)
+		} else if strings.HasPrefix(line, "//") {
+			fmt.Fprintln(w, line)
 		} else if prefix == "namespace" {
-			fmt.Printf("package %s\n", afterPrefix)
+			fmt.Fprintf(w, "package %s\n", afterPrefix)
 		} else if prefix == "include" {
-			fmt.Printf("import %s\n", strings.Replace(afterPrefix, ".fbs", ".proto", -1))
+			fmt.Fprintf(w, "import %s\n", strings.Replace(afterPrefix, ".fbs", ".proto", -1))
 		} else if prefix == "table" || prefix == "struct" {
-			fmt.Printf("message %s\n", afterPrefix)
+			fmt.Fprintf(w, "message %s\n", afterPrefix)
 			handleTableContent(reader, 1)
 		} else if prefix == "enum" {
-			fmt.Printf("enum %s{\n", strings.Split(afterPrefix, ":")[0])
+			fmt.Fprintf(w, "enum %s{\n", strings.Split(afterPrefix, ":")[0])
 			handleEnumContent(reader, 1)
 		} else {
-			fmt.Printf("!!! unkown line: %s\n", line)
+			fmt.Fprintf(w, "!!! unkown line: %s\n", line)
 		}
 	}
 }
@@ -58,17 +82,20 @@ func handleTableContent(reader *bufio.Reader, depth int) {
 
 		if line == "}" {
 			createTabs(depth - 1)
-			fmt.Println(line)
+			fmt.Fprintln(w, line)
 			return
+		} else if strings.HasPrefix(line, "//") || line == "" {
+			createTabs(depth - 1)
+			fmt.Fprintln(w, line)
 		} else if prefix == "table" || prefix == "struct" {
 			createTabs(depth)
-			fmt.Printf("message %s\n", afterPrefix)
+			fmt.Fprintf(w, "message %s\n", afterPrefix)
 			handleTableContent(reader, depth+1)
 		} else {
 			createTabs(depth)
 			split := strings.Split(strings.TrimSuffix(line, ";"), ":")
 			if len(split) != 2 {
-				fmt.Printf("!!! unkown line: %s\n", line)
+				fmt.Fprintf(w, "!!! unkown line: %s\n", line)
 				continue
 			}
 
@@ -89,7 +116,7 @@ func handleTableContent(reader *bufio.Reader, depth int) {
 				}
 			}
 
-			fmt.Printf("%s %s = %d;\n", getProtoType(split[1]), split[0], fieldID)
+			fmt.Fprintf(w, "%s %s = %d;\n", getProtoType(split[1]), split[0], fieldID)
 			fieldID++
 		}
 	}
@@ -116,11 +143,11 @@ func handleEnumContent(reader *bufio.Reader, depth int) {
 
 		if line == "}" {
 			createTabs(depth - 1)
-			fmt.Println(line)
+			fmt.Fprintln(w, line)
 			return
 		}
 		createTabs(depth)
-		fmt.Println(strings.TrimSuffix(line, ",") + ";")
+		fmt.Fprintln(w, strings.TrimSuffix(line, ",")+";")
 	}
 }
 
@@ -144,7 +171,7 @@ func readNextLine(reader *bufio.Reader) (line string, prefix string, afterPrefix
 
 func createTabs(depth int) {
 	for i := 0; i < depth; i++ {
-		fmt.Print("\t")
+		fmt.Fprint(w, "\t")
 	}
 }
 
